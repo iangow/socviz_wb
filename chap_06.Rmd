@@ -1,0 +1,204 @@
+---
+title: "6. Work with Models"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+```{r}
+library(ggplot2)
+library(dplyr, warn.conflicts = FALSE)
+library(gapminder)
+library(socviz)
+```
+
+```{r, echo=FALSE}
+p <- ggplot(data = gapminder, 
+            mapping = aes(x = log(gdpPercap), y = lifeExp))
+p + geom_point(alpha = 0.1) +
+    geom_smooth(color = "tomato", fill = "tomato", method = MASS::rlm) +
+    geom_smooth(color = "steelblue", fill = "steelblue", method = lm)
+
+p + geom_point(alpha = 0.1) +
+    geom_smooth(color = "tomato", method = lm, size = 1.2,
+                formula = y ~ splines::bs(x, 3), se = FALSE)
+
+p + geom_point(alpha = 0.1) +
+    geom_quantile(color = "tomato", 
+                  size = 1.2, method = "rqss",
+                  lambda = 1, quantiles = c(0.20, 0.5, 0.85))
+```
+
+### 6.1 Show Several Fits at Once, with a Legend
+
+```{r}
+model_colors <- RColorBrewer::brewer.pal(3, "Set1")
+model_colors
+```
+
+```{r, echo=FALSE}
+p0 <- ggplot(data = gapminder,
+             mapping = aes(x = log(gdpPercap), y = lifeExp))
+
+p1 <- p0 + geom_point(alpha = 0.2) +
+    geom_smooth(method = "lm", aes(color = "OLS", fill = "OLS")) +
+    geom_smooth(method = "lm", formula = y ~ splines::bs(x, df = 3),
+                aes(color = "Cubic Splite", fill = "Cubic Spline")) +
+    geom_smooth(method = "loess",
+                aes(color = "LOESS", fill = "LOESS"))
+
+p1 + scale_color_manual(name = "Models", values = model_colors) + 
+    scale_fill_manual(name = "Models", values = model_colors) +
+    theme(legend.position = "top")
+```
+
+### 6.2 Look Inside Model Objects
+
+```{r}
+gapminder %>% head()
+```
+
+
+```{r}
+str(gapminder)
+```
+
+```{r}
+out <- lm(formula = lifeExp ~ gdpPercap + pop + continent,
+          data = gapminder)
+```
+
+```{r}
+summary(out)
+```
+
+### 6.3 Get Model-Based Graphics Right
+
+- Present your findings in substantive terms
+- Show your degree of confidence
+- Show your data when you can
+
+### 6.4 Generate Predictions to Graph
+
+```{r}
+min_gdp <- min(gapminder$gdpPercap)
+max_gdp <- max(gapminder$gdpPercap)
+med_pop <- median(gapminder$pop)
+conts <- gapminder %>% pull(continent) %>% levels()
+
+pred_df <- expand.grid(gdpPercap = seq(from = min_gdp, to = max_gdp,
+                                        length.out = 100),
+                       pop = med_pop, 
+                       continent = conts)
+dim(pred_df)
+head(pred_df)
+```
+
+```{r}
+pred_out <- predict(object = out, newdata = pred_df, interval = "predict")
+head(pred_out)
+```
+
+```{r}
+pred_df <- as_tibble(cbind(pred_df, pred_out))
+head(pred_df)
+```
+
+```{r}
+p <- 
+    pred_df %>% 
+    filter(continent %in% c("Europe", "Africa"))  %>%
+    ggplot(aes(x = gdpPercap, y = fit, ymin = lwr, ymax = upr,
+               color = continent, 
+               fill = continent,
+               group = continent))
+p + geom_line() + 
+    geom_ribbon(alpha = 0.2, color = FALSE) + 
+    scale_x_log10(labels = scales::dollar)
+
+q <- 
+    ggplot() +
+    geom_point(data = filter(gapminder, continent %in% c("Europe", "Africa")),
+               aes(x = gdpPercap, y = lifeExp,
+                   color = continent),
+               alpha = 0.5,
+               inherit.aes = FALSE) + 
+    scale_x_log10(labels = scales::dollar)
+    
+q 
+
+p + geom_point(data = filter(gapminder, continent %in% c("Europe", "Africa")),
+               aes(x = gdpPercap, y = lifeExp,
+                   color = continent),
+               alpha = 0.5,
+               inherit.aes = FALSE) +
+    geom_line() + 
+    geom_ribbon(alpha = 0.2, color = FALSE) + 
+    scale_x_log10(labels = scales::dollar)
+```
+
+### 6.5 Tidy Model Objects with Broom
+
+#### Get component-level statistics with tidy()
+
+```{r}
+library(broom)
+out_comp <- tidy(out)
+out_comp %>% round_df()
+```
+
+```{r}
+p <- ggplot(out_comp, mapping = aes(x = term, y = estimate))
+p + geom_point() + coord_flip()
+```
+
+```{r}
+out_conf <- tidy(out, conf.int = TRUE)
+out_conf %>% round_df()
+```
+
+```{r}
+p <- out_conf %>%
+    filter(term %nin% "(Intercept)") %>%
+    mutate(nicelabs = prefix_strip(term, "continent")) %>%
+    ggplot(aes(x = reorder(nicelabs, estimate),
+           y = estimate, ymin = conf.low, ymax = conf.high)) 
+
+p + geom_pointrange() + coord_flip() + labs(x = "", y = "OLS Estimate")
+```
+
+```{r}
+out_aug <- augment(out)
+head(out_aug) %>% round_df()
+
+out_aug <- augment(out, data = gapminder)
+head(out_aug) %>% round_df()
+```
+```{r}
+out_aug <- augment(out, dat = gapminder)
+head(out_aug) %>% round_df()
+```
+
+```{r}
+p <- ggplot(data = out_aug, aes(x = .fitted, y = .resid))
+p + geom_point()
+```
+
+#### Get model-level statistics with glance()
+```{r}
+glance(out) %>% round_df()
+```
+```{r}
+library(survival)
+
+out_cph <- coxph(Surv(time, status) ~ age + sex, data = lung)
+out_surv <- survfit(out_cph)
+```
+
+```{r}
+out_tidy <- tidy(out_surv)
+p <- ggplot(data = out_tidy, mapping = aes(time, estimate))
+p + geom_line() + geom_ribbon(mapping = aes(ymin = conf.low, ymax= conf.high,
+                                            alpha = 0.2))
+```
+
